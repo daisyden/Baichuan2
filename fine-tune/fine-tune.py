@@ -13,13 +13,13 @@ from transformers.training_args import TrainingArguments
 
 @dataclass
 class ModelArguments:
-    model_name_or_path: Optional[str] = field(default="baichuan-inc/Baichuan2-7B-Base")
+    model_name_or_path: Optional[str] = field(default="baichuan-inc/Baichuan2-7B-Chat")
 
 
 @dataclass
 class DataArguments:
     data_path: str = field(
-        default=None, metadata={"help": "Path to the training data."}
+        default="data/yangqiao.json", metadata={"help": "Path to the training data."}
     )
 
 
@@ -27,13 +27,14 @@ class DataArguments:
 class TrainingArguments(transformers.TrainingArguments):
     cache_dir: Optional[str] = field(default=None)
     optim: str = field(default="adamw_torch")
+    num_train_epochs: int = field(default=5) 
     model_max_length: int = field(
         default=512,
         metadata={
             "help": "Maximum sequence length. Sequences will be right padded (and possibly truncated)."
         },
     )
-    use_lora: bool = field(default=False)
+    use_lora: bool = field(default=True)
 
 
 class SupervisedDataset(Dataset):
@@ -70,10 +71,11 @@ class SupervisedDataset(Dataset):
     def preprocessing(self, example):
         input_ids = []
         labels = []
-
+         
         for message in example["conversations"]:
             from_ = message["from"]
             value = message["value"]
+            print("from:{},value: {}".format(from_, value))
             value_ids = self.tokenizer.encode(value)
 
             if from_ == "human":
@@ -102,6 +104,7 @@ class SupervisedDataset(Dataset):
         }
 
     def __getitem__(self, idx) -> Dict[str, torch.Tensor]:
+        print("### self.data len:{}\n".format(len(self.data)))
         return self.preprocessing(self.data[idx])
 
 
@@ -116,6 +119,7 @@ def train():
         trust_remote_code=True,
         cache_dir=training_args.cache_dir,
     )
+    base_model = model
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
         use_fast=False,
@@ -147,6 +151,13 @@ def train():
     trainer.train()
     trainer.save_state()
     trainer.save_model(output_dir=training_args.output_dir)
+
+    if training_args.use_lora:
+        from peft import PeftModel
+        model_to_merge = PeftModel.from_pretrained(base_model, training_args.output_dir)
+        merged_model = model_to_merge.merge_and_unload()
+        merged_model_output = "./merged"
+        merged_model.save_pretrained(merged_model_output)
 
 
 if __name__ == "__main__":
